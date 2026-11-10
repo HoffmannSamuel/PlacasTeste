@@ -13,6 +13,7 @@
 body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100vh;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
 main{max-width:520px;margin:0 auto;padding:16px 16px 40px}
 h1{font-size:18px;font-weight:600;margin:4px 0 14px;display:flex;justify-content:space-between;align-items:baseline}
+h1 em{font-style:normal;font-size:12px;color:var(--ac);border:1px solid var(--line);border-radius:6px;padding:1px 6px;margin-left:6px;vertical-align:middle}
 h1 span{color:var(--mut);font-size:14px;font-weight:400}
 button{font-family:inherit}
 .scan{display:block;width:100%;padding:18px;border:0;border-radius:14px;background:var(--ac);color:#fff;font-size:17px;font-weight:600}
@@ -29,9 +30,9 @@ li button{background:none;border:0;color:var(--mut);font-size:20px;padding:4px 8
 .row{display:flex;gap:8px;margin-top:14px}
 .row button{flex:1;padding:13px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--tx);font-size:15px;font-weight:500}
 .row .clr{color:var(--bad);flex:0 0 auto}
-.cam{position:relative;margin-bottom:10px;border-radius:14px;overflow:hidden;background:#000;display:none}
-.cam video{display:block;width:100%}
-.box{position:absolute;left:8%;width:84%;border:3px solid var(--ac);border-radius:10px;box-shadow:0 0 0 999px rgba(0,0,0,.55);pointer-events:none;transition:border-color .2s}
+.cam{position:relative;margin-bottom:10px;border-radius:14px;overflow:hidden;background:#000;display:none;aspect-ratio:3.2/1}
+.cam video{position:absolute;width:119.05%;left:-9.52%;top:50%;transform:translateY(-50%)}
+.box{position:absolute;inset:0;border:3px solid var(--ac);border-radius:14px;pointer-events:none;transition:border-color .2s}
 .box.ok{border-color:#3ddc84}
 .alt{display:block;width:100%;padding:11px;margin-top:8px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--mut);font-size:14px}
 .empty{color:var(--mut);text-align:center;padding:28px 0}
@@ -39,7 +40,7 @@ li button{background:none;border:0;color:var(--mut);font-size:20px;padding:4px 8
 </head>
 <body>
 <main>
-<h1>Plates <span id="count"></span></h1>
+<h1><div>Plates <em id="ver">v4</em></div><span id="count"></span></h1>
 <div class="cam" id="cam"><video id="vid" playsinline muted></video><div class="box" id="box"></div></div>
 <button class="scan" id="scan">📷 Start scanning</button>
 <button class="alt" id="photo">or pick / take a photo instead</button>
@@ -118,13 +119,65 @@ function variants(src,sx,sy,sw,sh,tw){
   var d2=g.createImageData(w,h),b=d2.data;
   for(i=0;i<n;i++){a[i*4]=a[i*4+1]=a[i*4+2]=gr[i];b[i*4]=b[i*4+1]=b[i*4+2]=gr[i]>th?255:0;b[i*4+3]=255}
   g.putImageData(d,0,0);
-  var cb=mk(w,h);cb.getContext("2d").putImageData(d2,0,0);
-  return {gray:c,bin:cb};
+  var cb=mk(w,h),ink=new Uint8Array(n);cb.getContext("2d").putImageData(d2,0,0);
+  for(i=0;i<n;i++)ink[i]=b[i*4]===0?1:0;
+  return {gray:c,bin:cb,ink:ink,w:w,h:h};
 }
 function band(c){ /* centre 72% vertically: drops header and city text */
   var h=Math.round(c.height*.72),o=mk(c.width,h);
   o.getContext("2d").drawImage(c,0,Math.round(c.height*.14),c.width,h,0,0,c.width,h);return o;
 }
+/* ---- glyph-shape refinement: fixes I/L/1 and O/0 using the 7 glyph boxes ---- */
+function glyphBoxes(ink,w,h){
+  var seen=new Uint8Array(w*h),stack=new Int32Array(w*h),boxes=[],x,y;
+  for(y=0;y<h;y++)for(x=0;x<w;x++){
+    var s=y*w+x;if(!ink[s]||seen[s])continue;
+    var sp=0,x0=x,x1=x,y0=y,y1=y;stack[sp++]=s;seen[s]=1;
+    while(sp){
+      var p=stack[--sp],px=p%w,py=(p-px)/w;
+      if(px<x0)x0=px;if(px>x1)x1=px;if(py<y0)y0=py;if(py>y1)y1=py;
+      if(px>0&&ink[p-1]&&!seen[p-1]){seen[p-1]=1;stack[sp++]=p-1}
+      if(px<w-1&&ink[p+1]&&!seen[p+1]){seen[p+1]=1;stack[sp++]=p+1}
+      if(py>0&&ink[p-w]&&!seen[p-w]){seen[p-w]=1;stack[sp++]=p-w}
+      if(py<h-1&&ink[p+w]&&!seen[p+w]){seen[p+w]=1;stack[sp++]=p+w}
+    }
+    var bw=x1-x0+1,bh=y1-y0+1;
+    if(bh>.3*h&&bh<.85*h&&bw<1.3*bh&&bw>.25*bh)boxes.push([x0,x1+1,y0,y1+1]);
+  }
+  if(boxes.length>7){
+    var hs=boxes.map(function(b){return b[3]-b[2]}).sort(function(a,b){return a-b}),m=hs[hs.length>>1];
+    boxes=boxes.filter(function(b){return Math.abs(b[3]-b[2]-m)<m*.15});
+  }
+  if(boxes.length!==7)return null;
+  return boxes.sort(function(a,b){return a[0]-b[0]});
+}
+function maxRun(ink,w,x0,x1,y){var best=0,cur=0;for(var x=x0;x<x1;x++){if(ink[y*w+x]){cur++;if(cur>best)best=cur}else cur=0}return best}
+function barRatio(ink,w,b,a0,a1){
+  var bw=b[1]-b[0],bh=b[3]-b[2],ya=b[2]+Math.floor(bh*a0),yb=Math.max(ya+1,b[2]+Math.floor(bh*a1)),best=0;
+  for(var y=ya;y<yb;y++){var r=maxRun(ink,w,b[0],b[1],y);if(r>best)best=r}
+  return best/bw;
+}
+function cornerInk(ink,w,b,top,right){
+  var bw=b[1]-b[0],bh=b[3]-b[2],cw=Math.floor(bw*.25),ch=Math.floor(bh*.2),
+      x0=right?b[1]-cw:b[0],y0=top?b[2]:b[3]-ch,n=0;
+  for(var y=y0;y<y0+ch;y++)for(var x=x0;x<x0+cw;x++)if(ink[y*w+x])n++;
+  return n/Math.max(1,cw*ch);
+}
+function refine(plate,ink,w,h){
+  var B=glyphBoxes(ink,w,h);if(!B)return plate;
+  var out=plate.split("");
+  for(var i=0;i<7;i++){
+    var ch=out[i],b=B[i];
+    if((i<3||i===4)&&(ch==="I"||ch==="L"||ch==="1")&&!(i===4&&ch==="1")){
+      out[i]=barRatio(ink,w,b,0,.1)>=.45?"I":"L";
+    }else if(i===4&&(ch==="O"||ch==="0")){
+      var tl=cornerInk(ink,w,b,true,false),tr=cornerInk(ink,w,b,true,true),as=(tl-tr)/Math.max(.01,tl+tr);
+      out[i]=as>=.27?"0":"O";
+    }
+  }
+  return out.join("");
+}
+
 /* ---- OCR workers (two in parallel) ---- */
 var W=null,WL="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 async function getWorkers(){
@@ -146,7 +199,7 @@ async function readCrop(src,sx,sy,sw,sh,flip){
     ocr(w[0],flip?v.bin:v.gray,P.SINGLE_BLOCK),
     ocr(w[1],band(flip?v.gray:v.bin),P.SINGLE_LINE)
   ]);
-  return r;
+  return r.map(function(l){return l.map(function(p){return refine(p,v.ink,v.w,v.h)})});
 }
 function addPlate(p){
   if(items.some(function(i){return i.p===p}))return false;
@@ -155,9 +208,7 @@ function addPlate(p){
 /* ---- live camera ---- */
 var live=false,stream=null,hist=[],frame=0;
 var vid=$("vid"),cam=$("cam"),box=$("box");
-function layoutBox(){
-  var w=vid.clientWidth*.84,h=w/3.2;box.style.height=h+"px";box.style.top=((vid.clientHeight-h)/2)+"px";
-}
+function layoutBox(){}
 async function startLive(){
   try{
     stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}},audio:false});
