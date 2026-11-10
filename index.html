@@ -29,13 +29,20 @@ li button{background:none;border:0;color:var(--mut);font-size:20px;padding:4px 8
 .row{display:flex;gap:8px;margin-top:14px}
 .row button{flex:1;padding:13px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--tx);font-size:15px;font-weight:500}
 .row .clr{color:var(--bad);flex:0 0 auto}
+.cam{position:relative;margin-bottom:10px;border-radius:14px;overflow:hidden;background:#000;display:none}
+.cam video{display:block;width:100%}
+.box{position:absolute;left:8%;width:84%;border:3px solid var(--ac);border-radius:10px;box-shadow:0 0 0 999px rgba(0,0,0,.55);pointer-events:none;transition:border-color .2s}
+.box.ok{border-color:#3ddc84}
+.alt{display:block;width:100%;padding:11px;margin-top:8px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--mut);font-size:14px}
 .empty{color:var(--mut);text-align:center;padding:28px 0}
 </style>
 </head>
 <body>
 <main>
 <h1>Plates <span id="count"></span></h1>
-<button class="scan" id="scan">📷 Scan plate</button>
+<div class="cam" id="cam"><video id="vid" playsinline muted></video><div class="box" id="box"></div></div>
+<button class="scan" id="scan">📷 Start scanning</button>
+<button class="alt" id="photo">or pick / take a photo instead</button>
 <input type="file" id="file" accept="image/*" capture="environment">
 <div id="msg"></div>
 <ul id="list"></ul>
@@ -48,7 +55,7 @@ li button{background:none;border:0;color:var(--mut);font-size:20px;padding:4px 8
 <script src="lib/tesseract.min.js"></script>
 <script>
 (function(){
-var KEY="plates.v1",items=[],worker=null,busy=false;
+var KEY="plates.v1",items=[],busy=false;
 var $=function(id){return document.getElementById(id)};
 try{items=JSON.parse(localStorage.getItem(KEY)||"[]")}catch(e){items=[]}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(items))}catch(e){}}
@@ -69,24 +76,7 @@ function render(){
   $("count").textContent=items.length?items.length+" saved":"";
   $("actions").hidden=!items.length;
 }
-/* image -> grayscale, contrast-stretched canvas */
-function prep(file){
-  return new Promise(function(res,rej){
-    var img=new Image(),u=URL.createObjectURL(file);
-    img.onload=function(){
-      var s=Math.min(1,1400/Math.max(img.width,img.height)),c=document.createElement("canvas");
-      c.width=Math.round(img.width*s);c.height=Math.round(img.height*s);
-      var g=c.getContext("2d");g.drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(u);
-      var d=g.getImageData(0,0,c.width,c.height),a=d.data,lo=255,hi=0,i,v;
-      for(i=0;i<a.length;i+=4){v=a[i]*.299+a[i+1]*.587+a[i+2]*.114;a[i]=v;if(v<lo)lo=v;if(v>hi)hi=v}
-      var k=255/Math.max(1,hi-lo);
-      for(i=0;i<a.length;i+=4){v=(a[i]-lo)*k;a[i]=a[i+1]=a[i+2]=v}
-      g.putImageData(d,0,0);res(c);
-    };
-    img.onerror=function(){rej(new Error("img"))};img.src=u;
-  });
-}
-/* find Brazilian plates (ABC1234 / ABC1D23) in OCR text, fixing O/0 style confusions */
+
 var L2D={O:"0",Q:"0",D:"0",I:"1",L:"1",Z:"2",S:"5",B:"8",G:"6"},D2L={"0":"O","1":"I","2":"Z","5":"S","8":"B","6":"G"};
 function extract(text){
   var out=[];
@@ -106,31 +96,133 @@ function extract(text){
   });
   return out;
 }
-async function getWorker(){
-  if(worker)return worker;
-  msg("Loading reader (first time only)…");
-  worker=await Tesseract.createWorker("eng",1,{workerPath:"lib/worker.min.js",corePath:"lib/core/",langPath:"lib/lang/",gzip:true,cacheMethod:"none"});
-  return worker;
+/* ---- image helpers ---- */
+function mk(w,h){var c=document.createElement("canvas");c.width=w;c.height=h;return c}
+/* crop (sx,sy,sw,sh) of source, scale to target width, grayscale + contrast stretch; returns {gray,bin} canvases */
+function variants(src,sx,sy,sw,sh,tw){
+  var sc=tw/sw,w=Math.round(sw*sc),h=Math.round(sh*sc),c=mk(w,h),g=c.getContext("2d");
+  g.imageSmoothingQuality="high";g.drawImage(src,sx,sy,sw,sh,0,0,w,h);
+  var d=g.getImageData(0,0,w,h),a=d.data,n=w*h,gr=new Uint8Array(n),hist=new Uint32Array(256),i,v;
+  for(i=0;i<n;i++){v=a[i*4]*.299+a[i*4+1]*.587+a[i*4+2]*.114;gr[i]=v;hist[v|0]++}
+  var lo=0,hi=255,acc=0;
+  for(i=0;i<256;i++){acc+=hist[i];if(acc>n*.02){lo=i;break}}
+  acc=0;for(i=255;i>=0;i--){acc+=hist[i];if(acc>n*.02){hi=i;break}}
+  var k=255/Math.max(20,hi-lo);
+  hist.fill(0);
+  for(i=0;i<n;i++){v=(gr[i]-lo)*k;gr[i]=v<0?0:v>255?255:v;hist[gr[i]]++}
+  /* Otsu */
+  var tot=n,sum=0,sB=0,wB=0,mx=0,th=127;
+  for(i=0;i<256;i++)sum+=i*hist[i];
+  for(i=0;i<256;i++){wB+=hist[i];if(!wB)continue;var wF=tot-wB;if(!wF)break;sB+=i*hist[i];
+    var mB=sB/wB,mF=(sum-sB)/wF,bt=wB*wF*(mB-mF)*(mB-mF);if(bt>mx){mx=bt;th=i}}
+  var d2=g.createImageData(w,h),b=d2.data;
+  for(i=0;i<n;i++){a[i*4]=a[i*4+1]=a[i*4+2]=gr[i];b[i*4]=b[i*4+1]=b[i*4+2]=gr[i]>th?255:0;b[i*4+3]=255}
+  g.putImageData(d,0,0);
+  var cb=mk(w,h);cb.getContext("2d").putImageData(d2,0,0);
+  return {gray:c,bin:cb};
 }
+function band(c){ /* centre 72% vertically: drops header and city text */
+  var h=Math.round(c.height*.72),o=mk(c.width,h);
+  o.getContext("2d").drawImage(c,0,Math.round(c.height*.14),c.width,h,0,0,c.width,h);return o;
+}
+/* ---- OCR workers (two in parallel) ---- */
+var W=null,WL="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+async function getWorkers(){
+  if(W)return W;
+  msg("Loading reader (first time only)…");
+  var o={workerPath:"lib/worker.min.js",corePath:"lib/core/",langPath:"lib/lang/",gzip:true,cacheMethod:"none"};
+  W=await Promise.all([Tesseract.createWorker("eng",1,o),Tesseract.createWorker("eng",1,o)]);
+  return W;
+}
+async function ocr(w,c,psm){
+  await w.setParameters({tessedit_pageseg_mode:psm,tessedit_char_whitelist:WL});
+  var r=await w.recognize(c);return extract(r.data.text||"");
+}
+var P=Tesseract.PSM;
+/* returns array of plate reads (one per pass) */
+async function readCrop(src,sx,sy,sw,sh,flip){
+  var w=await getWorkers(),v=variants(src,sx,sy,sw,sh,900);
+  var r=await Promise.all([
+    ocr(w[0],flip?v.bin:v.gray,P.SINGLE_BLOCK),
+    ocr(w[1],band(flip?v.gray:v.bin),P.SINGLE_LINE)
+  ]);
+  return r;
+}
+function addPlate(p){
+  if(items.some(function(i){return i.p===p}))return false;
+  items.unshift({p:p,t:Date.now()});save();render();return true;
+}
+/* ---- live camera ---- */
+var live=false,stream=null,hist=[],frame=0;
+var vid=$("vid"),cam=$("cam"),box=$("box");
+function layoutBox(){
+  var w=vid.clientWidth*.84,h=w/3.2;box.style.height=h+"px";box.style.top=((vid.clientHeight-h)/2)+"px";
+}
+async function startLive(){
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}},audio:false});
+  }catch(e){msg("Camera blocked. Allow camera access, or use the photo option.",true);return}
+  vid.srcObject=stream;await vid.play().catch(function(){});
+  try{var t=stream.getVideoTracks()[0];await t.applyConstraints({advanced:[{focusMode:"continuous"}]})}catch(e){}
+  cam.style.display="block";layoutBox();
+  live=true;hist=[];$("scan").textContent="■ Stop";
+  try{await getWorkers()}catch(e){msg("Could not load the reader.",true);stopLive();return}
+  msg("Point the box at a plate and hold steady");
+  loop();
+}
+function stopLive(){
+  live=false;$("scan").textContent="📷 Start scanning";cam.style.display="none";
+  if(stream){stream.getTracks().forEach(function(t){t.stop()});stream=null}
+}
+async function loop(){
+  while(live){
+    try{
+      var vw=vid.videoWidth,vh=vid.videoHeight;
+      if(!vw){await new Promise(function(r){setTimeout(r,100)});continue}
+      var sw=vw*.84,sh=sw/3.2,sx=(vw-sw)/2,sy=(vh-sh)/2;
+      var res=await readCrop(vid,sx,sy,sw,sh,frame++%2===1);
+      if(!live)break;
+      var votes=[].concat(res[0],res[1]);
+      hist.push(votes);if(hist.length>5)hist.shift();
+      var cnt={};hist.forEach(function(h){h.forEach(function(p){cnt[p]=(cnt[p]||0)+1})});
+      for(var p in cnt){
+        if(cnt[p]>=2){
+          hist=[];
+          if(addPlate(p)){
+            if(navigator.vibrate)navigator.vibrate(120);
+            box.classList.add("ok");setTimeout(function(){box.classList.remove("ok")},700);
+            msg("Added "+p+" ✓");
+          }else msg(p+" already in list");
+          await new Promise(function(r){setTimeout(r,900)});
+          break;
+        }
+      }
+    }catch(e){await new Promise(function(r){setTimeout(r,300)})}
+  }
+}
+/* ---- single photo (fallback) ---- */
 async function analyze(file){
   if(busy)return;busy=true;$("scan").disabled=true;
   try{
-    var w=await getWorker();msg("Reading plate…");
-    var c=await prep(file),found=[];
-    var modes=[Tesseract.PSM.SPARSE_TEXT,Tesseract.PSM.SINGLE_BLOCK];
-    for(var m=0;m<modes.length&&!found.length;m++){
-      await w.setParameters({tessedit_pageseg_mode:modes[m],tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"});
-      var r=await w.recognize(c);found=extract(r.data.text||"");
+    var w=await getWorkers();msg("Reading photo…");
+    var img=await new Promise(function(res,rej){var i=new Image(),u=URL.createObjectURL(file);i.onload=function(){URL.revokeObjectURL(u);res(i)};i.onerror=rej;i.src=u});
+    var found=[],s=Math.min(1,1600/Math.max(img.width,img.height)),W2=Math.round(img.width*s),H2=Math.round(img.height*s);
+    var tries=[[0],[1]];
+    for(var t=0;t<2&&!found.length;t++){
+      var v=variants(img,0,0,img.width,img.height,W2),src=t?v.bin:v.gray;
+      var r=await Promise.all([ocr(w[0],src,P.SPARSE_TEXT),ocr(w[1],src,P.SINGLE_BLOCK)]);
+      found=[].concat(r[0],r[1]).filter(function(p,i,a){return a.indexOf(p)===i});
     }
-    var added=0;
-    found.forEach(function(p){if(!items.some(function(i){return i.p===p})){items.unshift({p:p,t:Date.now()});added++}});
-    save();render();
-    msg(!found.length?"No plate found. Get closer, flat on, good light.":added?"Added "+added+" — check it":"Already in list",!found.length);
+    var added=0;found.forEach(function(p){if(addPlate(p))added++});
+    msg(!found.length?"No plate found. Try the live scanner.":added?"Added "+added+" — check it":"Already in list",!found.length);
   }catch(e){msg("Could not read the image.",true)}
   finally{busy=false;$("scan").disabled=false}
 }
-$("scan").onclick=function(){$("file").click()};
+$("scan").onclick=function(){live?stopLive():startLive()};
+$("photo").onclick=function(){$("file").click()};
 $("file").onchange=function(e){var f=e.target.files[0];e.target.value="";if(f)analyze(f)};
+window.addEventListener("resize",layoutBox);
+document.addEventListener("visibilitychange",function(){if(document.hidden&&live)stopLive()});
 $("exp").onclick=async function(){
   var csv="\uFEFFPlate;Date\r\n"+items.slice().reverse().map(function(i){return i.p+";"+fmt(i.t)}).join("\r\n");
   var f=new File([csv],"plates.csv",{type:"text/csv"});
