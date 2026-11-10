@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Plates</title>
+<style>
+:root{color-scheme:dark;--bg:#0f1115;--card:#1a1d24;--line:#272b35;--tx:#e8eaf0;--mut:#8b91a0;--ac:#4f8cff;--bad:#ff6b6b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100vh;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+main{max-width:520px;margin:0 auto;padding:16px 16px 40px}
+h1{font-size:18px;font-weight:600;margin:4px 0 14px;display:flex;justify-content:space-between;align-items:baseline}
+h1 span{color:var(--mut);font-size:14px;font-weight:400}
+button{font-family:inherit}
+.scan{display:block;width:100%;padding:18px;border:0;border-radius:14px;background:var(--ac);color:#fff;font-size:17px;font-weight:600}
+.scan[disabled]{opacity:.6}
+input[type=file]{display:none}
+#msg{min-height:22px;margin:10px 2px;color:var(--mut);font-size:14px}
+#msg.err{color:var(--bad)}
+ul{list-style:none;margin:0;padding:0}
+li{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:8px}
+li input{font:600 20px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:1px;flex:1;min-width:0;width:100%;background:none;border:0;border-bottom:1px dashed transparent;color:var(--tx);padding:2px 0;text-transform:uppercase}
+li input:focus{outline:0;border-bottom-color:var(--ac)}
+li small{color:var(--mut);font-size:12px}
+li button{background:none;border:0;color:var(--mut);font-size:20px;padding:4px 8px}
+.row{display:flex;gap:8px;margin-top:14px}
+.row button{flex:1;padding:13px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--tx);font-size:15px;font-weight:500}
+.row .clr{color:var(--bad);flex:0 0 auto}
+.empty{color:var(--mut);text-align:center;padding:28px 0}
+</style>
+</head>
+<body>
+<main>
+<h1>Plates <span id="count"></span></h1>
+<button class="scan" id="scan">📷 Scan plate</button>
+<input type="file" id="file" accept="image/*" capture="environment">
+<div id="msg"></div>
+<ul id="list"></ul>
+<div class="row" id="actions" hidden>
+  <button id="exp">Export Excel</button>
+  <button id="copy">Copy</button>
+  <button id="clr" class="clr">Clear</button>
+</div>
+</main>
+<script src="lib/tesseract.min.js"></script>
+<script>
+(function(){
+var KEY="plates.v1",items=[],worker=null,busy=false;
+var $=function(id){return document.getElementById(id)};
+try{items=JSON.parse(localStorage.getItem(KEY)||"[]")}catch(e){items=[]}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(items))}catch(e){}}
+function msg(t,err){var m=$("msg");m.textContent=t||"";m.className=err?"err":""}
+function p2(n){return String(n).padStart(2,"0")}
+function fmt(ts){var d=new Date(ts);return p2(d.getDate())+"/"+p2(d.getMonth()+1)+"/"+d.getFullYear()+" "+p2(d.getHours())+":"+p2(d.getMinutes())}
+function render(){
+  var ul=$("list");ul.textContent="";
+  items.forEach(function(it,i){
+    var li=document.createElement("li"),b=document.createElement("input"),s=document.createElement("small"),x=document.createElement("button");
+    b.value=it.p;b.maxLength=8;b.autocapitalize="characters";b.spellcheck=false;b.setAttribute("aria-label","Edit plate");
+    b.onchange=function(){var v=b.value.toUpperCase().replace(/[^A-Z0-9]/g,"");if(v){it.p=v;save()}b.value=it.p};
+    s.textContent=fmt(it.t);x.textContent="✕";x.setAttribute("aria-label","Delete");
+    x.onclick=function(){items.splice(i,1);save();render()};
+    li.append(b,s,x);ul.append(li);
+  });
+  if(!items.length){var e=document.createElement("div");e.className="empty";e.textContent="No plates yet";ul.append(e)}
+  $("count").textContent=items.length?items.length+" saved":"";
+  $("actions").hidden=!items.length;
+}
+/* image -> grayscale, contrast-stretched canvas */
+function prep(file){
+  return new Promise(function(res,rej){
+    var img=new Image(),u=URL.createObjectURL(file);
+    img.onload=function(){
+      var s=Math.min(1,1400/Math.max(img.width,img.height)),c=document.createElement("canvas");
+      c.width=Math.round(img.width*s);c.height=Math.round(img.height*s);
+      var g=c.getContext("2d");g.drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(u);
+      var d=g.getImageData(0,0,c.width,c.height),a=d.data,lo=255,hi=0,i,v;
+      for(i=0;i<a.length;i+=4){v=a[i]*.299+a[i+1]*.587+a[i+2]*.114;a[i]=v;if(v<lo)lo=v;if(v>hi)hi=v}
+      var k=255/Math.max(1,hi-lo);
+      for(i=0;i<a.length;i+=4){v=(a[i]-lo)*k;a[i]=a[i+1]=a[i+2]=v}
+      g.putImageData(d,0,0);res(c);
+    };
+    img.onerror=function(){rej(new Error("img"))};img.src=u;
+  });
+}
+/* find Brazilian plates (ABC1234 / ABC1D23) in OCR text, fixing O/0 style confusions */
+var L2D={O:"0",Q:"0",D:"0",I:"1",L:"1",Z:"2",S:"5",B:"8",G:"6"},D2L={"0":"O","1":"I","2":"Z","5":"S","8":"B","6":"G"};
+function extract(text){
+  var out=[];
+  text.split(/\n/).forEach(function(line){
+    var s=line.toUpperCase().replace(/[^A-Z0-9]/g,""),best=null;
+    for(var i=0;i+7<=s.length;i++){
+      var w=s.substr(i,7),fix=0,r="",ok=true;
+      for(var j=0;j<7;j++){
+        var ch=w[j],isD=/[0-9]/.test(ch);
+        if(j<3){if(isD){if(!D2L[ch]){ok=false;break}ch=D2L[ch];fix++}}
+        else if(j!==4){if(!isD){if(!L2D[ch]){ok=false;break}ch=L2D[ch];fix++}}
+        r+=ch;
+      }
+      if(ok&&fix<=2&&(!best||fix<best.f))best={p:r,f:fix};
+    }
+    if(best&&out.indexOf(best.p)<0)out.push(best.p);
+  });
+  return out;
+}
+async function getWorker(){
+  if(worker)return worker;
+  msg("Loading reader (first time only)…");
+  worker=await Tesseract.createWorker("eng",1,{workerPath:"lib/worker.min.js",corePath:"lib/core/",langPath:"lib/lang/",gzip:true,cacheMethod:"none"});
+  return worker;
+}
+async function analyze(file){
+  if(busy)return;busy=true;$("scan").disabled=true;
+  try{
+    var w=await getWorker();msg("Reading plate…");
+    var c=await prep(file),found=[];
+    var modes=[Tesseract.PSM.SPARSE_TEXT,Tesseract.PSM.SINGLE_BLOCK];
+    for(var m=0;m<modes.length&&!found.length;m++){
+      await w.setParameters({tessedit_pageseg_mode:modes[m],tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"});
+      var r=await w.recognize(c);found=extract(r.data.text||"");
+    }
+    var added=0;
+    found.forEach(function(p){if(!items.some(function(i){return i.p===p})){items.unshift({p:p,t:Date.now()});added++}});
+    save();render();
+    msg(!found.length?"No plate found. Get closer, flat on, good light.":added?"Added "+added+" — check it":"Already in list",!found.length);
+  }catch(e){msg("Could not read the image.",true)}
+  finally{busy=false;$("scan").disabled=false}
+}
+$("scan").onclick=function(){$("file").click()};
+$("file").onchange=function(e){var f=e.target.files[0];e.target.value="";if(f)analyze(f)};
+$("exp").onclick=async function(){
+  var csv="\uFEFFPlate;Date\r\n"+items.slice().reverse().map(function(i){return i.p+";"+fmt(i.t)}).join("\r\n");
+  var f=new File([csv],"plates.csv",{type:"text/csv"});
+  try{
+    if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f]});return}
+  }catch(e){if(e&&e.name==="AbortError")return}
+  var a=document.createElement("a");a.href=URL.createObjectURL(f);a.download="plates.csv";document.body.append(a);a.click();a.remove();
+};
+$("copy").onclick=async function(){
+  var t=items.slice().reverse().map(function(i){return i.p}).join("\n");
+  try{await navigator.clipboard.writeText(t);msg("Copied")}catch(e){msg("Copy failed",true)}
+};
+$("clr").onclick=function(){
+  var b=$("clr");
+  if(b.dataset.c){items=[];save();render();b.textContent="Clear";delete b.dataset.c;return}
+  b.dataset.c=1;b.textContent="Tap again";
+  setTimeout(function(){b.textContent="Clear";delete b.dataset.c},3000);
+};
+render();
+if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(function(){});
+})();
+</script>
+</body>
+</html>
