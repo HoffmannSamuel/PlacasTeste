@@ -28,6 +28,12 @@ button{font-family:inherit}
 .hold{display:block;width:100%;margin-top:8px;padding:22px;border:2px solid var(--ac);border-radius:14px;background:var(--card);color:var(--tx);font-size:17px;font-weight:600;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:none}
 .hold.on{background:#1f6b45;border-color:#3ddc84}
 .hold[hidden]{display:none}
+.tbtn{display:block;width:100%;margin-top:8px;padding:11px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--tx);font-size:14px}
+.tbtn[hidden]{display:none}
+.add{display:flex;gap:8px;margin:0 0 12px}
+.add input{flex:1;min-width:0;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--tx);font:600 17px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:1px;text-transform:uppercase}
+.add input:focus{outline:0;border-color:var(--ac)}
+.add button{padding:0 18px;border:0;border-radius:12px;background:var(--ac);color:#fff;font-size:15px;font-weight:600}
 .alt{display:block;width:100%;padding:11px;margin-top:8px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--mut);font-size:14px}
 input[type=file]{display:none}
 #msg{min-height:22px;margin:10px 2px;color:var(--mut);font-size:14px}
@@ -46,15 +52,17 @@ li button{background:none;border:0;color:var(--mut);font-size:20px;padding:4px 8
 </head>
 <body>
 <main>
-<h1><div>Plates <em id="ver">v10</em></div><span id="count"></span></h1>
+<h1><div>Plates <em id="ver">v11</em></div><span id="count"></span></h1>
 <div class="seg"><button id="mCar" class="on">Car</button><button id="mMoto">Motorcycle</button></div>
 <div class="cam" id="cam"><video id="vid" playsinline muted></video><div class="box" id="box"></div></div>
 <button class="scan" id="scan">📷 Start scanning</button>
 <button class="hold" id="hold" hidden>✋ Hold to scan</button>
+<button class="tbtn" id="torch" hidden>🔦 Torch: Off</button>
 <button class="alt" id="photo">or pick / take a photo instead</button>
 <input type="file" id="file" accept="image/*" capture="environment">
 <div id="msg"></div>
 <div id="dbg"></div>
+<div class="add"><input id="man" placeholder="Add plate manually" maxlength="8" autocapitalize="characters" autocomplete="off" spellcheck="false"><button id="addb">Add</button></div>
 <ul id="list"></ul>
 <div class="row" id="actions" hidden>
   <button id="exp">Export Excel</button>
@@ -211,7 +219,9 @@ function pickChar(i,cands){
     sc[ch]=(sc[ch]||0)+s;
   });
   var best=null;for(var k in sc)if(!best||sc[k]>sc[best])best=k;
-  if(!best||!(sc[best]>=45||best==="V"||best==="Y"))return null;
+  var distinct=0;for(var q in sc)distinct++;
+  var strong=best&&(sc[best]>=45||best==="V"||best==="Y"),weak=best&&distinct===1&&sc[best]>=20;
+  if(!strong&&!weak)return null;
   pickChar.score=sc[best];return best;
 }
 /* ---- minimal .xlsx writer (zip, stored) ---- */
@@ -280,7 +290,7 @@ function grayCrop(src,sx,sy,sw,sh,tw){
   var k=255/Math.max(20,hi-lo);
   for(i=0;i<n;i++){v=(gr[i]-lo)*k;gr[i]=v<0?0:v>255?255:v;a[i*4]=a[i*4+1]=a[i*4+2]=gr[i]}
   g.putImageData(d,0,0);
-  return {gray:c,gr:gr,w:w,h:h};
+  return {gray:c,gr:gr,w:w,h:h,hi:hi};
 }
 /* local-threshold ink (optionally blurred + closed) and its binary canvas */
 function inkFrom(G,blur,close){
@@ -323,7 +333,7 @@ async function getWorkers(){
 async function recMany(wk,crops,wl,type){
   await wk.setParameters({tessedit_pageseg_mode:P.SINGLE_CHAR,tessedit_char_whitelist:wl});
   var o=[];
-  for(var i=0;i<crops.length;i++){recCount++;var r=await wk.recognize(crops[i]);o.push({t:(r.data.text||"").trim().toUpperCase().slice(0,1),c:r.data.confidence||0,type:type})}
+  for(var i=0;i<crops.length;i++){recCount++;var r=await wk.recognize(crops[i]),tx=(r.data.text||"").trim().toUpperCase().slice(0,1);o.push({t:tx,c:tx?Math.max(r.data.confidence||0,25):0,type:type})}
   return o;
 }
 /* read the 7 glyphs one by one. Fast pass first; extra image variants only when unsure */
@@ -353,7 +363,7 @@ async function readGlyphs(v,B){
 }
 function free(l){l.forEach(function(c){c.width=c.height=0})}
 async function readFrame(src,sx,sy,sw,sh,moto){
-  var G=grayCrop(src,sx,sy,sw,sh,moto?800:900),sets=moto?[[0,0]]:[[2,3]];
+  var G=grayCrop(src,sx,sy,sw,sh,moto?800:900);lastHi=G.hi;var sets=moto?[[0,0]]:[[2,3]];
   for(var s=0;s<sets.length;s++){
     var v=inkFrom(G,sets[s][0],sets[s][1]),B=glyphBoxes(v.ink,v.w,v.h,moto);
     if(B){var p=await readGlyphs(v,B);if(p){free([G.gray,v.bin]);return [p]}}
@@ -383,6 +393,20 @@ function setMode(m){
   mode=m;$("mCar").className=m==="car"?"on":"";$("mMoto").className=m==="moto"?"on":"";
   hist=[];layout();msg(live?"Switched to "+(m==="car"?"car":"motorcycle")+" mode":"");
 }
+var torchOK=false,torchOn=false,torchMode="off",torchT=0,lastHi=128;
+function torchLabel(){return "🔦 Torch: "+(torchMode==="auto"?"Auto":torchMode==="on"?"On":"Off")}
+async function setTorch(on){
+  if(!stream||!torchOK||torchOn===on)return;
+  try{await stream.getVideoTracks()[0].applyConstraints({advanced:[{torch:on}]});torchOn=on;torchT=Date.now()}catch(e){}
+}
+function applyTorchMode(){
+  $("torch").textContent=torchLabel();
+  if(torchMode==="on")setTorch(true);else if(torchMode==="off")setTorch(false);
+}
+function autoTorch(){
+  if(torchMode!=="auto"||!torchOK||Date.now()-torchT<2500)return;
+  if(!torchOn&&lastHi<80)setTorch(true);else if(torchOn&&lastHi>215)setTorch(false);
+}
 function setHold(on){
   if(holding===on)return;holding=on;hist=[];
   $("hold").className="hold"+(on?" on":"");$("hold").textContent=on?"Scanning… keep holding":"✋ Hold to scan";
@@ -394,14 +418,16 @@ async function startLive(){
   }catch(e){msg("Camera blocked. Allow camera access, or use the photo option.",true);return}
   vid.srcObject=stream;await vid.play().catch(function(){});
   try{await stream.getVideoTracks()[0].applyConstraints({advanced:[{focusMode:"continuous"}]})}catch(e){}
+  try{var cp=stream.getVideoTracks()[0].getCapabilities();torchOK=!!(cp&&cp.torch)}catch(e){torchOK=false}
+  torchOn=false;$("torch").hidden=!torchOK;$("torch").textContent=torchLabel();
   cam.style.display="block";layout();
   live=true;hist=[];$("scan").textContent="■ Stop";
   try{await getWorkers()}catch(e){msg("Could not load the reader.",true);stopLive();return}
-  $("hold").hidden=false;msg("Camera ready. Hold the button to scan");
+  $("hold").hidden=false;if(torchOK&&torchMode==="on")setTorch(true);msg("Camera ready. Hold the button to scan");
   loop();
 }
 function stopLive(){
-  live=false;setHold(false);$("dbg").textContent="";$("hold").hidden=true;$("scan").textContent="📷 Start scanning";cam.style.display="none";
+  live=false;setHold(false);$("dbg").textContent="";$("torch").hidden=true;torchOn=false;$("hold").hidden=true;$("scan").textContent="📷 Start scanning";cam.style.display="none";
   if(stream){stream.getTracks().forEach(function(t){t.stop()});stream=null}
 }
 async function loop(){
@@ -413,7 +439,7 @@ async function loop(){
         readFrame(vid,r.sx,r.sy,r.sw,r.sh,mode==="moto"),
         sleep(10000).then(function(){throw new Error("slow")})
       ]);
-      $("dbg").textContent=(Date.now()-t0)+" ms/frame";
+      $("dbg").textContent=(Date.now()-t0)+" ms/frame"+(torchOK?" · light "+Math.round(lastHi):"");autoTorch();
       if(recCount>250)await resetWorkers();
       if(!live)break;
       if(!holding){hist=[];continue}
@@ -479,6 +505,14 @@ $("photo").onclick=function(){$("file").click()};
 $("file").onchange=function(e){var f=e.target.files[0];e.target.value="";if(f)analyze(f)};
 $("mCar").onclick=function(){setMode("car")};
 $("mMoto").onclick=function(){setMode("moto")};
+function manualAdd(){
+  var i=$("man"),v=i.value.toUpperCase().replace(/[^A-Z0-9]/g,"");
+  if(v.length!==7){msg("A plate has 7 characters, e.g. ABC1D23",true);return}
+  if(addPlate(v)){msg("Added "+v+" ✓");i.value=""}else msg(v+" already in list");
+}
+$("addb").onclick=manualAdd;
+$("man").addEventListener("keydown",function(e){if(e.key==="Enter"){e.preventDefault();manualAdd()}});
+$("torch").onclick=function(){torchMode=torchMode==="off"?"on":torchMode==="on"?"auto":"off";applyTorchMode()};
 var hb=$("hold");
 hb.addEventListener("pointerdown",function(e){e.preventDefault();try{hb.setPointerCapture(e.pointerId)}catch(_){}setHold(true)});
 ["pointerup","pointercancel","lostpointercapture"].forEach(function(n){hb.addEventListener(n,function(){setHold(false)})});
