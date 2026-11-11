@@ -42,7 +42,7 @@ li button{background:none;border:0;color:var(--mut);font-size:20px;padding:4px 8
 </head>
 <body>
 <main>
-<h1><div>Plates <em id="ver">v7</em></div><span id="count"></span></h1>
+<h1><div>Plates <em id="ver">v8</em></div><span id="count"></span></h1>
 <div class="seg"><button id="mCar" class="on">Car</button><button id="mMoto">Motorcycle</button></div>
 <div class="cam" id="cam"><video id="vid" playsinline muted></video><div class="box" id="box"></div></div>
 <button class="scan" id="scan">📷 Start scanning</button>
@@ -103,21 +103,21 @@ function boxBlur(g,w,h,r){
       o[y*w+x]=(I[yb*W1+xb]-I[ya*W1+xb]-I[yb*W1+xa]+I[ya*W1+xa])/((xb-xa)*(yb-ya))}}
   return o;
 }
+function boxAny(a,w,h,r){
+  var W1=w+1,I=new Int32Array(W1*(h+1)),x,y,o=new Uint8Array(w*h);
+  for(y=0;y<h;y++){var rs=0;for(x=0;x<w;x++){rs+=a[y*w+x];I[(y+1)*W1+x+1]=I[y*W1+x+1]+rs}}
+  for(y=0;y<h;y++){var ya=Math.max(0,y-r),yb=Math.min(h,y+r+1);
+    for(x=0;x<w;x++){var xa=Math.max(0,x-r),xb=Math.min(w,x+r+1);
+      o[y*w+x]=(I[yb*W1+xb]-I[ya*W1+xb]-I[yb*W1+xa]+I[ya*W1+xa])>0?1:0}}
+  return o;
+}
+/* closing = dilate then erode (fills gaps inside letters) */
 function closeInk(ink,w,h,r){
-  function pass(src,horiz,mx){
-    var o=new Uint8Array(w*h),x,y,k,v;
-    for(y=0;y<h;y++)for(x=0;x<w;x++){
-      v=mx?0:1;
-      for(k=-r;k<=r;k++){
-        var xx=horiz?x+k:x,yy=horiz?y:y+k,s;
-        if(xx<0||yy<0||xx>=w||yy>=h)s=mx?0:1;else s=src[yy*w+xx];
-        if(mx){if(s){v=1;break}}else{if(!s){v=0;break}}
-      }
-      o[y*w+x]=v;
-    }
-    return o;
-  }
-  return pass(pass(pass(pass(ink,true,true),false,true),true,false),false,false);
+  var d=boxAny(ink,w,h,r),n=w*h,i,inv=new Uint8Array(n);
+  for(i=0;i<n;i++)inv[i]=d[i]?0:1;
+  var e=boxAny(inv,w,h,r),o=new Uint8Array(n);
+  for(i=0;i<n;i++)o[i]=e[i]?0:1;
+  return o;
 }
 function glyphBoxes(ink,w,h,moto){
   var seen=new Uint8Array(w*h),stack=new Int32Array(w*h),boxes=[],x,y,lo=moto?.14:.2,hi=moto?.5:.85;
@@ -337,15 +337,8 @@ async function readGlyphs(v,B){
   }
   return /^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/.test(out)?out:null;
 }
-/* fallback: plain line reading */
-async function readLines(v,moto){
-  var w=await getWorkers(),wl=LET+DIG;
-  async function one(wk,c,psm){await wk.setParameters({tessedit_pageseg_mode:psm,tessedit_char_whitelist:wl});var r=await wk.recognize(c);return extract(r.data.text||"",moto)}
-  var r=await Promise.all(moto?[one(w[0],v.gray,P.SINGLE_BLOCK),one(w[1],v.bin,P.SINGLE_BLOCK)]:[one(w[0],band(v.gray),P.SINGLE_LINE),one(w[1],band(v.bin),P.SINGLE_LINE)]);
-  return [].concat(r[0],r[1]);
-}
 async function readFrame(src,sx,sy,sw,sh,moto){
-  var G=grayCrop(src,sx,sy,sw,sh,moto?800:900),sets=moto?[[0,0]]:[[2,3],[0,0],[1,2]];
+  var G=grayCrop(src,sx,sy,sw,sh,moto?800:900),sets=moto?[[0,0]]:[[2,3]];
   for(var s=0;s<sets.length;s++){
     var v=inkFrom(G,sets[s][0],sets[s][1]),B=glyphBoxes(v.ink,v.w,v.h,moto);
     if(B){var p=await readGlyphs(v,B);if(p)return [p]}
