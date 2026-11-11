@@ -42,7 +42,7 @@ li button{background:none;border:0;color:var(--mut);font-size:20px;padding:4px 8
 </head>
 <body>
 <main>
-<h1><div>Plates <em id="ver">v6</em></div><span id="count"></span></h1>
+<h1><div>Plates <em id="ver">v7</em></div><span id="count"></span></h1>
 <div class="seg"><button id="mCar" class="on">Car</button><button id="mMoto">Motorcycle</button></div>
 <div class="cam" id="cam"><video id="vid" playsinline muted></video><div class="box" id="box"></div></div>
 <button class="scan" id="scan">📷 Start scanning</button>
@@ -61,7 +61,7 @@ li button{background:none;border:0;color:var(--mut);font-size:20px;padding:4px 8
 <script>
 (function(){
 /*PURE-START*/
-var L2D={O:"0",Q:"0",D:"0",I:"1",L:"1",Z:"2",S:"5",B:"8",G:"6"},D2L={"0":"O","1":"I","2":"Z","5":"S","8":"B","6":"G"};
+var L2D={O:"0",Q:"0",D:"0",I:"1",L:"1",Z:"2",S:"5",B:"8",G:"6"},D2L={"0":"O","1":"I","2":"Z","5":"S","8":"B","6":"G","7":"Z","4":"A"};
 var LET="ABCDEFGHIJKLMNOPQRSTUVWXYZ",DIG="0123456789";
 function extract(text,join){
   var out=[],lines=join?[text.replace(/\n/g,"")]:text.split(/\n/);
@@ -149,7 +149,13 @@ function glyphBoxes(ink,w,h,moto){
     var t=boxes.slice(0,3).sort(function(a,b){return a[0]-b[0]}),u=boxes.slice(3).sort(function(a,b){return a[0]-b[0]});
     return t.concat(u);
   }
-  return boxes.sort(function(a,b){return a[0]-b[0]});
+  boxes.sort(function(a,b){return a[0]-b[0]});
+  var ws=boxes.map(function(b){return b[1]-b[0]}).sort(function(a,b){return a-b}),mw=ws[3];
+  for(var i=0;i<7;i++){
+    var bw2=boxes[i][1]-boxes[i][0];if(Math.abs(bw2-mw)>.45*mw)return null;
+    if(i){var gap=boxes[i][0]-boxes[i-1][1];if(gap<.03*mw||gap>1.3*mw)return null}
+  }
+  return boxes;
 }
 function maxRun(ink,w,x0,x1,y){var best=0,cur=0;for(var x=x0;x<x1;x++){if(ink[y*w+x]){cur++;if(cur>best)best=cur}else cur=0}return best}
 function barRatio(ink,w,b,a0,a1){
@@ -178,7 +184,7 @@ function shapeFix(ch,i,ink,w,b){
   }
   if(i===4&&(ch==="I"||ch==="1"))return cornerInk(ink,w,b,true,true)>=.15?"I":"1";
   if(letterPos&&(ch==="I"||ch==="L"||ch==="1")&&!(i===4&&ch==="1")){var tp=barRatio(ink,w,b,0,.15),md=barRatio(ink,w,b,.45,.55);return (tp>=.45||tp>=1.3*md)?"I":"L"}
-  if(letterPos&&(ch==="V"||ch==="Y"))return spanAt(ink,w,b,.8)<=.28?"Y":"V";
+  if(letterPos&&(ch==="V"||ch==="Y"))return spanAt(ink,w,b,.8)<=.36?"Y":"V";
   if(i===4&&(ch==="O"||ch==="0")){
     var tl=cornerInk(ink,w,b,true,false),tr=cornerInk(ink,w,b,true,true);
     return (tl-tr)/Math.max(.01,tl+tr)>=.27?"0":"O";
@@ -191,12 +197,13 @@ function pickChar(i,cands){
   cands.forEach(function(x){
     if(!x.t)return;
     var ch=x.t,s=x.c;
-    if(need!=="*"&&x.type!==need){ch=need==="L"?D2L[ch]:L2D[ch];s=s*.9}
+    if(need!=="*"&&x.type!==need){ch=need==="L"?D2L[ch]:L2D[ch];s=s*.5}
     if(!ch)return;
     sc[ch]=(sc[ch]||0)+s;
   });
   var best=null;for(var k in sc)if(!best||sc[k]>sc[best])best=k;
-  return best&&(sc[best]>=45||best==="V"||best==="Y")?best:null;
+  if(!best||!(sc[best]>=45||best==="V"||best==="Y"))return null;
+  pickChar.score=sc[best];return best;
 }
 /* ---- minimal .xlsx writer (zip, stored) ---- */
 var CRC=(function(){var t=[],c,n,k;for(n=0;n<256;n++){c=n;for(k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0}return t})();
@@ -252,8 +259,8 @@ function render(){
 }
 /* ---- images ---- */
 function mk(w,h){var c=document.createElement("canvas");c.width=w;c.height=h;return c}
-/* crop -> contrast-stretched gray + local-threshold binary, both as canvases, plus ink array */
-function variants(src,sx,sy,sw,sh,tw,moto){
+/* crop -> contrast-stretched gray canvas + array */
+function grayCrop(src,sx,sy,sw,sh,tw){
   var sc=tw/sw,w=Math.round(sw*sc),h=Math.round(sh*sc),c=mk(w,h),g=c.getContext("2d",{willReadFrequently:true});
   g.imageSmoothingQuality="high";g.drawImage(src,sx,sy,sw,sh,0,0,w,h);
   var d=g.getImageData(0,0,w,h),a=d.data,n=w*h,gr=new Uint8Array(n),hist=new Uint32Array(256),i,v;
@@ -264,12 +271,18 @@ function variants(src,sx,sy,sw,sh,tw,moto){
   var k=255/Math.max(20,hi-lo);
   for(i=0;i<n;i++){v=(gr[i]-lo)*k;gr[i]=v<0?0:v>255?255:v;a[i*4]=a[i*4+1]=a[i*4+2]=gr[i]}
   g.putImageData(d,0,0);
-  var sm=moto?gr:boxBlur(gr,w,h,2),ink=adaptive(sm,w,h);if(!moto)ink=closeInk(ink,w,h,3);
+  return {gray:c,gr:gr,w:w,h:h};
+}
+/* local-threshold ink (optionally blurred + closed) and its binary canvas */
+function inkFrom(G,blur,close){
+  var w=G.w,h=G.h,n=w*h,i,sm=blur?boxBlur(G.gr,w,h,blur):G.gr,ink=adaptive(sm,w,h);
+  if(close)ink=closeInk(ink,w,h,close);
   var cb=mk(w,h),gb=cb.getContext("2d"),d2=gb.createImageData(w,h),b=d2.data;
   for(i=0;i<n;i++){b[i*4]=b[i*4+1]=b[i*4+2]=ink[i]?0:255;b[i*4+3]=255}
   gb.putImageData(d2,0,0);
-  return {gray:c,bin:cb,ink:ink,w:w,h:h};
+  return {gray:G.gray,bin:cb,ink:ink,w:w,h:h};
 }
+function variants(src,sx,sy,sw,sh,tw,moto){return inkFrom(grayCrop(src,sx,sy,sw,sh,tw),moto?0:2,moto?0:3)}
 function band(c){var h=Math.round(c.height*.72),o=mk(c.width,h);o.getContext("2d").drawImage(c,0,Math.round(c.height*.14),c.width,h,0,0,c.width,h);return o}
 function gcrop(cv,b){
   var bw=b[1]-b[0],bh=b[3]-b[2],px=Math.round(bw*.25),py=Math.round(bh*.2);
@@ -300,15 +313,24 @@ async function recMany(wk,crops,wl,type){
   for(var i=0;i<crops.length;i++){var r=await wk.recognize(crops[i]);o.push({t:(r.data.text||"").trim().toUpperCase().slice(0,1),c:r.data.confidence||0,type:type})}
   return o;
 }
-/* read the 7 glyphs one by one: 3 image variants x letter/digit lists, split over 2 workers */
+/* read the 7 glyphs one by one. Fast pass first; extra image variants only when unsure */
 async function readGlyphs(v,B){
-  var w=await getWorkers(),A=B.map(function(b){return gcrop(v.gray,b)}),K=B.map(function(b){return gcrop(v.bin,b)}),C=K.map(smoothCrop);
-  var R=await Promise.all([
-    (async function(){return [await recMany(w[0],A,LET,"L"),await recMany(w[0],K,LET,"L"),await recMany(w[0],C,LET,"L")]})(),
-    (async function(){return [await recMany(w[1],A,DIG,"D"),await recMany(w[1],K,DIG,"D"),await recMany(w[1],C,DIG,"D")]})()
-  ]);
-  var all=R[0].concat(R[1]),out="";
-  for(var i=0;i<7;i++){
+  var w=await getWorkers(),K=B.map(function(b){return gcrop(v.bin,b)});
+  var R=await Promise.all([recMany(w[0],K,LET,"L"),recMany(w[1],K,DIG,"D")]),all=[R[0],R[1]],i,sure=true;
+  for(i=0;i<7;i++){
+    var c=pickChar(i,all.map(function(a){return a[i]}));
+    if(!c||pickChar.score<80){sure=false;break}
+  }
+  if(!sure){
+    var A=B.map(function(b){return gcrop(v.gray,b)}),C=K.map(smoothCrop);
+    var R2=await Promise.all([
+      (async function(){return [await recMany(w[0],A,LET,"L"),await recMany(w[0],C,LET,"L")]})(),
+      (async function(){return [await recMany(w[1],A,DIG,"D"),await recMany(w[1],C,DIG,"D")]})()
+    ]);
+    all=all.concat(R2[0],R2[1]);
+  }
+  var out="";
+  for(i=0;i<7;i++){
     var ch=pickChar(i,all.map(function(a){return a[i]}));
     if(!ch)return null;
     out+=shapeFix(ch,i,v.ink,v.w,B[i]);
@@ -323,9 +345,12 @@ async function readLines(v,moto){
   return [].concat(r[0],r[1]);
 }
 async function readFrame(src,sx,sy,sw,sh,moto){
-  var v=variants(src,sx,sy,sw,sh,moto?800:900,moto),B=glyphBoxes(v.ink,v.w,v.h,moto);
-  if(B){var p=await readGlyphs(v,B);if(p)return [p]}
-  return readLines(v,moto);
+  var G=grayCrop(src,sx,sy,sw,sh,moto?800:900),sets=moto?[[0,0]]:[[2,3],[0,0],[1,2]];
+  for(var s=0;s<sets.length;s++){
+    var v=inkFrom(G,sets[s][0],sets[s][1]),B=glyphBoxes(v.ink,v.w,v.h,moto);
+    if(B){var p=await readGlyphs(v,B);if(p)return [p]}
+  }
+  return [];
 }
 function addPlate(p){
   if(items.some(function(i){return i.p===p}))return false;
