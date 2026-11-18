@@ -30,6 +30,28 @@ button{font-family:inherit}
 .hold[hidden]{display:none}
 .tbtn{display:block;width:100%;margin-top:8px;padding:11px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--tx);font-size:14px}
 .tbtn[hidden]{display:none}
+.shut{display:block;width:100%;margin-top:8px;padding:22px;border:0;border-radius:14px;background:var(--ac);color:#fff;font-size:18px;font-weight:700}
+.shut:active{filter:brightness(.85)}
+.done{display:block;width:100%;margin-top:8px;padding:14px;border:1px solid var(--ac);border-radius:12px;background:var(--card);color:var(--tx);font-size:15px;font-weight:600}
+.done[disabled]{opacity:.4}
+.shut[hidden],.done[hidden],#res[hidden],#mainview[hidden]{display:none}
+.rhead{display:flex;justify-content:space-between;align-items:baseline;margin:0 0 6px}
+.rhead b{font-size:16px}
+#rmsg{color:var(--mut);font-size:14px;min-height:20px;margin:0 2px 10px}
+.rrow{display:flex;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px;margin-bottom:8px;align-items:center}
+.rrow.ok{border-color:#2e7d52}
+.rimg{width:46%;flex:none;border-radius:8px;background:#000;display:block}
+.rside{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+.rst{font-size:13px;color:var(--mut)}
+.rst.good{color:#3ddc84}
+.rin{width:100%;min-width:0;padding:9px 10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--tx);font:600 17px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:1px;text-transform:uppercase}
+.rin:focus{outline:0;border-color:var(--ac)}
+.rin:disabled{opacity:.6}
+.rbtn{padding:9px;border:0;border-radius:10px;background:var(--ac);color:#fff;font-size:14px;font-weight:600}
+.rbtn[disabled]{opacity:.35}
+.rfoot{display:flex;gap:8px;margin-top:12px}
+.rfoot button{flex:1;padding:13px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--tx);font-size:15px;font-weight:500}
+.rfoot .pri{background:var(--ac);border-color:var(--ac);color:#fff;font-weight:600}
 .add{display:flex;gap:8px;margin:0 0 12px}
 .add input{flex:1;min-width:0;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--tx);font:600 17px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:1px;text-transform:uppercase}
 .add input:focus{outline:0;border-color:var(--ac)}
@@ -52,11 +74,15 @@ li button{background:none;border:0;color:var(--mut);font-size:20px;padding:4px 8
 </head>
 <body>
 <main>
-<h1><div>Plates <em id="ver">v11</em></div><span id="count"></span></h1>
+<h1><div>Plates <em id="ver">v13</em></div><span id="count"></span></h1>
+<div id="mainview">
 <div class="seg"><button id="mCar" class="on">Car</button><button id="mMoto">Motorcycle</button></div>
+<div class="seg"><button id="tLive" class="on">Live scan</button><button id="tBatch">Batch photos</button></div>
 <div class="cam" id="cam"><video id="vid" playsinline muted></video><div class="box" id="box"></div></div>
 <button class="scan" id="scan">📷 Start scanning</button>
 <button class="hold" id="hold" hidden>✋ Hold to scan</button>
+<button class="shut" id="shut" hidden>● Take photo</button>
+<button class="done" id="doneb" hidden disabled>✔ Done — read the photos</button>
 <button class="tbtn" id="torch" hidden>🔦 Torch: Off</button>
 <button class="alt" id="photo">or pick / take a photo instead</button>
 <input type="file" id="file" accept="image/*" capture="environment">
@@ -69,6 +95,13 @@ li button{background:none;border:0;color:var(--mut);font-size:20px;padding:4px 8
   <button id="txt">Export text</button>
   <button id="copy">Copy</button>
   <button id="clr" class="clr">Clear</button>
+</div>
+</div>
+<div id="res" hidden>
+  <div class="rhead"><b>Batch results</b><span id="rcount"></span></div>
+  <div id="rmsg"></div>
+  <div id="rlist"></div>
+  <div class="rfoot"><button id="addall" class="pri">Add all</button><button id="rclose">Close</button></div>
 </div>
 </main>
 <script src="lib/tesseract.min.js"></script>
@@ -170,7 +203,7 @@ function glyphBoxes(ink,w,h,moto){
   var ws=boxes.map(function(b){return b[1]-b[0]}).sort(function(a,b){return a-b}),mw=ws[3];
   for(var i=0;i<7;i++){
     var bw2=boxes[i][1]-boxes[i][0];if(Math.abs(bw2-mw)>.45*mw)return null;
-    if(i){var gap=boxes[i][0]-boxes[i-1][1];if(gap<.03*mw||gap>1.3*mw)return null}
+    if(i){var gap=boxes[i][0]-boxes[i-1][1];if(gap<-.1*mw||gap>1.3*mw)return null}
   }
   return boxes;
 }
@@ -199,7 +232,7 @@ function shapeFix(ch,i,ink,w,b){
     for(var y=b[2]+Math.floor(bh*.3);y<b[2]+Math.floor(bh*.4);y++)for(var x=b[0]+Math.floor(bw*.42);x<b[0]+Math.floor(bw*.58);x++){t++;if(ink[y*w+x])n++}
     return n/Math.max(1,t)>=.35?"M":"H";
   }
-  if(i===4&&(ch==="I"||ch==="1"))return cornerInk(ink,w,b,true,true)>=.15?"I":"1";
+  if(i===4&&(ch==="I"||ch==="1"))return cornerInk(ink,w,b,true,true)>=.06?"I":"1";
   if(letterPos&&(ch==="I"||ch==="L"||ch==="1")&&!(i===4&&ch==="1")){var tp=barRatio(ink,w,b,0,.15),md=barRatio(ink,w,b,.45,.55);return (tp>=.45||tp>=1.3*md)?"I":"L"}
   if(letterPos&&(ch==="V"||ch==="Y"))return spanAt(ink,w,b,.8)<=.36?"Y":"V";
   if(i===4&&(ch==="O"||ch==="0")){
@@ -363,7 +396,7 @@ async function readGlyphs(v,B){
 }
 function free(l){l.forEach(function(c){c.width=c.height=0})}
 async function readFrame(src,sx,sy,sw,sh,moto){
-  var G=grayCrop(src,sx,sy,sw,sh,moto?800:900);lastHi=G.hi;var sets=moto?[[0,0]]:[[2,3]];
+  var G=grayCrop(src,sx,sy,sw,sh,moto?800:900);lastHi=G.hi;var sets=moto?[[0,0]]:[[2,3],[2,1]];
   for(var s=0;s<sets.length;s++){
     var v=inkFrom(G,sets[s][0],sets[s][1]),B=glyphBoxes(v.ink,v.w,v.h,moto);
     if(B){var p=await readGlyphs(v,B);if(p){free([G.gray,v.bin]);return [p]}}
@@ -377,7 +410,7 @@ function addPlate(p){
   items.unshift({p:p,t:Date.now()});save();render();return true;
 }
 /* ---- camera ---- */
-var live=false,holding=false,stream=null,hist=[];
+var live=false,holding=false,stream=null,hist=[],scanType="live",batchCam=false,shots=[],sampTimer=null,sampC=null,cancelBatch=false;
 var vid=$("vid"),cam=$("cam"),box=$("box");
 function cropRect(vw,vh){
   var ar=mode==="moto"?1.15:3.2,sw=vw*(mode==="moto"?.6:.84),sh=sw/ar;
@@ -393,7 +426,7 @@ function setMode(m){
   mode=m;$("mCar").className=m==="car"?"on":"";$("mMoto").className=m==="moto"?"on":"";
   hist=[];layout();msg(live?"Switched to "+(m==="car"?"car":"motorcycle")+" mode":"");
 }
-var torchOK=false,torchOn=false,torchMode="off",torchT=0,lastHi=128;
+var torchOK=false,torchOn=false,torchMode="auto",torchT=0,lastHi=128;
 function torchLabel(){return "🔦 Torch: "+(torchMode==="auto"?"Auto":torchMode==="on"?"On":"Off")}
 async function setTorch(on){
   if(!stream||!torchOK||torchOn===on)return;
@@ -401,15 +434,19 @@ async function setTorch(on){
 }
 function applyTorchMode(){
   $("torch").textContent=torchLabel();
-  if(torchMode==="on")setTorch(true);else if(torchMode==="off")setTorch(false);
+  if(!(holding||batchCam))setTorch(false);
+  else if(torchMode==="on")setTorch(true);
+  else if(torchMode==="off")setTorch(false);
 }
+/* auto: switch the torch on (only while holding) if the plate area is very dark */
 function autoTorch(){
-  if(torchMode!=="auto"||!torchOK||Date.now()-torchT<2500)return;
-  if(!torchOn&&lastHi<80)setTorch(true);else if(torchOn&&lastHi>215)setTorch(false);
+  if(!(holding||batchCam)||torchMode!=="auto"||!torchOK||torchOn)return;
+  if(lastHi<80)setTorch(true);
 }
 function setHold(on){
   if(holding===on)return;holding=on;hist=[];
   $("hold").className="hold"+(on?" on":"");$("hold").textContent=on?"Scanning… keep holding":"✋ Hold to scan";
+  if(on){if(torchMode==="on")setTorch(true)}else setTorch(false);
   if(live)msg(on?"Fill the box with the plate":"Camera ready. Hold the button to scan");
 }
 async function startLive(){
@@ -421,13 +458,46 @@ async function startLive(){
   try{var cp=stream.getVideoTracks()[0].getCapabilities();torchOK=!!(cp&&cp.torch)}catch(e){torchOK=false}
   torchOn=false;$("torch").hidden=!torchOK;$("torch").textContent=torchLabel();
   cam.style.display="block";layout();
-  live=true;hist=[];$("scan").textContent="■ Stop";
+  live=true;hist=[];$("scan").textContent=scanType==="batch"?"■ Close camera":"■ Stop";
+  if(scanType==="batch"){
+    batchCam=true;shots=[];updateShut();
+    $("shut").hidden=false;$("doneb").hidden=false;
+    if(torchOK&&torchMode==="on")setTorch(true);
+    sampTimer=setInterval(sampleLight,700);
+    msg("Align the plate in the box, then tap Take photo");
+    return;
+  }
   try{await getWorkers()}catch(e){msg("Could not load the reader.",true);stopLive();return}
-  $("hold").hidden=false;if(torchOK&&torchMode==="on")setTorch(true);msg("Camera ready. Hold the button to scan");
+  $("hold").hidden=false;msg("Camera ready. Hold the button to scan");
   loop();
 }
+function updateShut(){
+  $("shut").textContent="● Take photo"+(shots.length?" ("+shots.length+")":"");
+  $("doneb").disabled=!shots.length;
+}
+function sampleLight(){
+  var vw=vid.videoWidth;if(!vw)return;
+  var r=cropRect(vw,vid.videoHeight);sampC=sampC||mk(64,24);
+  var g=sampC.getContext("2d",{willReadFrequently:true});g.drawImage(vid,r.sx,r.sy,r.sw,r.sh,0,0,64,24);
+  var a=g.getImageData(0,0,64,24).data,h=new Uint32Array(256),n=64*24,i,acc=0;
+  for(i=0;i<n;i++)h[(a[i*4]*.299+a[i*4+1]*.587+a[i*4+2]*.114)|0]++;
+  for(i=255;i>=0;i--){acc+=h[i];if(acc>n*.02){lastHi=i;break}}
+  autoTorch();$("dbg").textContent=torchOK?"light "+Math.round(lastHi):"";
+}
+function shoot(){
+  if(!live||!vid.videoWidth)return;
+  if(shots.length>=60){msg("60 photos is the limit. Tap Done to read them.",true);return}
+  var r=cropRect(vid.videoWidth,vid.videoHeight),w=Math.min(1280,Math.round(r.sw)),h=Math.round(w*r.sh/r.sw),c=mk(w,h);
+  c.getContext("2d").drawImage(vid,r.sx,r.sy,r.sw,r.sh,0,0,w,h);
+  shots.push({c:c,moto:mode==="moto"});updateShut();
+  if(navigator.vibrate)navigator.vibrate(30);
+  box.classList.add("ok");setTimeout(function(){box.classList.remove("ok")},180);
+  msg(shots.length+" photo"+(shots.length>1?"s":"")+" taken");
+}
 function stopLive(){
-  live=false;setHold(false);$("dbg").textContent="";$("torch").hidden=true;torchOn=false;$("hold").hidden=true;$("scan").textContent="📷 Start scanning";cam.style.display="none";
+  live=false;setHold(false);batchCam=false;if(sampTimer){clearInterval(sampTimer);sampTimer=null}
+  $("dbg").textContent="";$("torch").hidden=true;torchOn=false;$("hold").hidden=true;$("shut").hidden=true;$("doneb").hidden=true;
+  $("scan").textContent=scanType==="batch"?"📷 Open camera":"📷 Start scanning";cam.style.display="none";
   if(stream){stream.getTracks().forEach(function(t){t.stop()});stream=null}
 }
 async function loop(){
@@ -512,7 +582,86 @@ function manualAdd(){
 }
 $("addb").onclick=manualAdd;
 $("man").addEventListener("keydown",function(e){if(e.key==="Enter"){e.preventDefault();manualAdd()}});
-$("torch").onclick=function(){torchMode=torchMode==="off"?"on":torchMode==="on"?"auto":"off";applyTorchMode()};
+$("torch").onclick=function(){torchMode=torchMode==="auto"?"on":torchMode==="on"?"off":"auto";applyTorchMode()};
+/* ---- batch results ---- */
+var rows=[];
+function validPlate(v){return v.length===7}
+function cleanPlate(s){return s.toUpperCase().replace(/[^A-Z0-9]/g,"")}
+function setType(tp){
+  if(live)stopLive();
+  scanType=tp;$("tLive").className=tp==="live"?"on":"";$("tBatch").className=tp==="batch"?"on":"";
+  $("scan").textContent=tp==="batch"?"📷 Open camera":"📷 Start scanning";msg("");
+}
+function rmsg(t){$("rmsg").textContent=t||""}
+function updRCount(){
+  var f=rows.filter(function(r){return r.plate}).length;
+  $("rcount").textContent=rows.length+" photos · "+f+" read";
+}
+function markAdded(r,txt){
+  r.added=true;r.inp.disabled=true;r.btn.disabled=true;r.btn.textContent="✓ Added";r.el.className="rrow ok";
+  r.st.textContent=txt||"Added to list";r.st.className="rst good";
+}
+function addRow(r){
+  var ok=validPlate(cleanPlate(r.inp.value));
+  if(!ok){r.st.textContent="A plate has 7 characters";return}
+  var v=cleanPlate(r.inp.value);
+  if(addPlate(v))markAdded(r);
+  else{r.st.textContent=v+" is already in the list";r.st.className="rst"}
+}
+function showResults(){
+  $("mainview").hidden=true;$("res").hidden=false;
+  var box2=$("rlist");box2.textContent="";rows=[];cancelBatch=false;
+  shots.forEach(function(s,i){
+    var el=document.createElement("div"),img=document.createElement("img"),side=document.createElement("div"),st=document.createElement("div"),inp=document.createElement("input"),btn=document.createElement("button");
+    el.className="rrow";img.className="rimg";
+    var tc=mk(360,Math.max(1,Math.round(360*s.c.height/s.c.width)));tc.getContext("2d").drawImage(s.c,0,0,tc.width,tc.height);img.src=tc.toDataURL("image/jpeg",.7);free([tc]);
+    side.className="rside";st.className="rst";st.textContent="Waiting…";
+    inp.className="rin";inp.maxLength=8;inp.placeholder="type plate";inp.autocapitalize="characters";inp.spellcheck=false;inp.autocomplete="off";
+    btn.className="rbtn";btn.textContent="Add";btn.disabled=true;
+    var r={el:el,st:st,inp:inp,btn:btn,plate:null,added:false,s:s};
+    inp.oninput=function(){btn.disabled=r.added||!validPlate(cleanPlate(inp.value))};
+    btn.onclick=function(){addRow(r)};
+    side.append(st,inp,btn);el.append(img,side);box2.append(el);rows.push(r);
+  });
+  updRCount();rmsg("Reading photos…");
+  analyzeAll();
+}
+async function analyzeAll(){
+  for(var i=0;i<rows.length&&!cancelBatch;i++){
+    var r=rows[i];r.st.textContent="Reading…";
+    var p=null;
+    try{
+      var v=await Promise.race([readFrame(r.s.c,0,0,r.s.c.width,r.s.c.height,r.s.moto),sleep(15000).then(function(){throw new Error("slow")})]);
+      p=v&&v[0]||null;
+    }catch(e){if(e&&e.message==="slow")await resetWorkers()}
+    if(cancelBatch)return;
+    free([r.s.c]);
+    if(p){r.plate=p;r.inp.value=p;r.st.textContent="Plate found — check it";r.st.className="rst good";r.btn.disabled=false}
+    else{r.st.textContent="No plate found — type it or skip";r.st.className="rst";}
+    updRCount();
+    if(recCount>250)await resetWorkers();
+    await sleep(20);
+  }
+  if(!cancelBatch){var f=rows.filter(function(x){return x.plate}).length;rmsg(f+" of "+rows.length+" photos read. Check, edit if needed, then tap Add.")}
+}
+function closeResults(force){
+  var pending=rows.some(function(r){return r.plate&&!r.added});
+  var b=$("rclose");
+  if(pending&&!force&&!b.dataset.c){b.dataset.c=1;b.textContent="Discard? Tap again";setTimeout(function(){b.textContent="Close";delete b.dataset.c},3000);return}
+  cancelBatch=true;delete b.dataset.c;b.textContent="Close";
+  shots.forEach(function(s){free([s.c])});shots=[];rows=[];$("rlist").textContent="";
+  $("res").hidden=true;$("mainview").hidden=false;msg("");
+}
+$("tLive").onclick=function(){setType("live")};
+$("tBatch").onclick=function(){setType("batch")};
+$("shut").onclick=shoot;
+$("doneb").onclick=function(){if(!shots.length)return;stopLive();showResults()};
+$("addall").onclick=function(){
+  var n=0,dup=0;
+  rows.forEach(function(r){if(r.added)return;var v=cleanPlate(r.inp.value);if(!validPlate(v))return;if(addPlate(v)){markAdded(r);n++}else dup++});
+  rmsg("Added "+n+(dup?" ("+dup+" already in list)":""));
+};
+$("rclose").onclick=function(){closeResults(false)};
 var hb=$("hold");
 hb.addEventListener("pointerdown",function(e){e.preventDefault();try{hb.setPointerCapture(e.pointerId)}catch(_){}setHold(true)});
 ["pointerup","pointercancel","lostpointercapture"].forEach(function(n){hb.addEventListener(n,function(){setHold(false)})});
