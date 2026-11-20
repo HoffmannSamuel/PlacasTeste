@@ -36,6 +36,9 @@ button{font-family:inherit}
 .prow{display:flex;gap:8px}
 .prow button{flex:1;padding:11px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--tx);font-size:14px;font-weight:600}
 .prow .pri{background:var(--ac);border-color:var(--ac);color:#fff}
+.rsave{padding:8px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--mut);font-size:13px}
+#toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(16px);background:#2a2f3a;color:#fff;padding:12px 18px;border-radius:12px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;max-width:88%;text-align:center;z-index:50;border:1px solid var(--line)}
+#toast.show{opacity:1;transform:translateX(-50%)}
 .shut{display:block;width:100%;margin-top:8px;padding:22px;border:0;border-radius:14px;background:var(--ac);color:#fff;font-size:18px;font-weight:700}
 .shut:active{filter:brightness(.85)}
 .done{display:block;width:100%;margin-top:8px;padding:14px;border:1px solid var(--ac);border-radius:12px;background:var(--card);color:var(--tx);font-size:15px;font-weight:600}
@@ -80,7 +83,7 @@ li button{background:none;border:0;color:var(--mut);font-size:20px;padding:4px 8
 </head>
 <body>
 <main>
-<h1><div>Plates <em id="ver">v14</em></div><span id="count"></span></h1>
+<h1><div>Plates <em id="ver">v15</em></div><span id="count"></span></h1>
 <div id="mainview">
 <div class="pend" id="pend" hidden><div id="pendt"></div><div class="prow"><button id="pendread" class="pri">Read them</button><button id="penddel">Discard</button></div></div>
 <div class="seg"><button id="mCar" class="on">Car</button><button id="mMoto">Motorcycle</button></div>
@@ -111,6 +114,7 @@ li button{background:none;border:0;color:var(--mut);font-size:20px;padding:4px 8
   <div class="rfoot"><button id="addall" class="pri">Add all</button><button id="rclose">Close</button></div>
 </div>
 </main>
+<div id="toast" role="status"></div>
 <script src="lib/tesseract.min.js"></script>
 <script>
 (function(){
@@ -302,6 +306,8 @@ try{items=JSON.parse(localStorage.getItem(KEY)||"[]")}catch(e){items=[]}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(items))}catch(e){}}
 function msg(t,err){var m=$("msg");m.textContent=t||"";m.className=err?"err":""}
 function sleep(ms){return new Promise(function(r){setTimeout(r,ms)})}
+var toastT=null;
+function toast(s){var e=$("toast");e.textContent=s;e.className="show";clearTimeout(toastT);toastT=setTimeout(function(){e.className=""},2600)}
 function render(){
   var ul=$("list");ul.textContent="";
   items.forEach(function(it,i){
@@ -489,7 +495,7 @@ function shoot(){
   var r=cropRect(vid.videoWidth,vid.videoHeight),w=Math.min(1280,Math.round(r.sw)),h=Math.round(w*r.sh/r.sw),c=mk(w,h);
   c.getContext("2d").drawImage(vid,r.sx,r.sy,r.sw,r.sh,0,0,w,h);
   var s={c:c,moto:mode==="moto",id:null};shots.push(s);updateShut();
-  try{c.toBlob(function(b){if(b)dbPut(b,s.moto).then(function(id){s.id=id}).catch(function(){})},"image/jpeg",.9)}catch(e){}
+  try{c.toBlob(function(b){if(b)s.idp=dbPut(b,s.moto).then(function(id){s.id=id;return id}).catch(function(){return null})},"image/jpeg",.9)}catch(e){}
   if(navigator.vibrate)navigator.vibrate(30);
   box.classList.add("ok");setTimeout(function(){box.classList.remove("ok")},180);
   msg(shots.length+" photo"+(shots.length>1?"s":"")+" taken");
@@ -563,7 +569,12 @@ $("exp").onclick=function(){
 };
 $("txt").onclick=function(){sendFile(new File([list().join("\r\n")+"\r\n"],"plates.txt",{type:"text/plain"}))};
 $("copy").onclick=async function(){
-  try{await navigator.clipboard.writeText(list().join("\n"));msg("Copied")}catch(e){msg("Copy failed",true)}
+  var l=list(),txt=l.join("\n"),ok=false;
+  try{await navigator.clipboard.writeText(txt);ok=true}catch(e){
+    try{var ta=document.createElement("textarea");ta.value=txt;ta.style.position="fixed";ta.style.opacity="0";document.body.append(ta);ta.select();ok=document.execCommand("copy");ta.remove()}catch(_){}
+  }
+  if(ok){if(navigator.vibrate)navigator.vibrate(30);toast("✓ Copied "+l.length+" plate"+(l.length!==1?"s":"")+" to clipboard")}
+  else toast("Copy failed");
 };
 $("clr").onclick=function(){
   var b=$("clr");
@@ -603,6 +614,13 @@ function dbAll(){return idb().then(function(d){return new Promise(function(res,r
   var r=d.transaction("shots","readonly").objectStore("shots").getAll();
   r.onsuccess=function(){res(r.result)};r.onerror=function(){rej(r.error)};
 })})}
+function dbDelete(id){return idb().then(function(d){return new Promise(function(res){
+  var r=d.transaction("shots","readwrite").objectStore("shots").delete(id);r.onsuccess=function(){res()};r.onerror=function(){res()};
+})}).catch(function(){})}
+function dropShot(s){
+  var i=shots.indexOf(s);if(i>-1)shots.splice(i,1);free([s.c]);
+  Promise.resolve(s.idp).then(function(id){var k=id!=null?id:s.id;if(k!=null)dbDelete(k)});
+}
 function dbClear(){return idb().then(function(d){return new Promise(function(res){
   var r=d.transaction("shots","readwrite").objectStore("shots").clear();r.onsuccess=function(){res()};r.onerror=function(){res()};
 })}).catch(function(){})}
@@ -671,7 +689,9 @@ function showResults(){
     var r={el:el,st:st,inp:inp,btn:btn,plate:null,added:false,s:s};
     inp.oninput=function(){btn.disabled=r.added||!validPlate(cleanPlate(inp.value))};
     btn.onclick=function(){addRow(r)};
-    side.append(st,inp,btn);el.append(img,side);box2.append(el);rows.push(r);
+    var sv=document.createElement("button");sv.className="rsave";sv.textContent="💾 Save photo";
+    sv.onclick=function(){savePhoto(r,sv)};
+    side.append(st,inp,btn,sv);el.append(img,side);box2.append(el);rows.push(r);
   });
   updRCount();rmsg("Reading photos…");
   analyzeAll();
@@ -693,6 +713,28 @@ async function analyzeAll(){
   }
   if(!cancelBatch){var f=rows.filter(function(x){return x.plate}).length;rmsg(f+" of "+rows.length+" photos read. Check, edit if needed, then tap Add.")}
 }
+async function savePhoto(r,btn){
+  try{
+    var b=await new Promise(function(res){r.s.c.toBlob(res,"image/jpeg",.92)});
+    if(!b)throw new Error("no blob");
+    var f=new File([b],"plate-"+Date.now()+".jpg",{type:"image/jpeg"}),a=document.createElement("a");
+    a.href=URL.createObjectURL(f);a.download=f.name;document.body.append(a);a.click();a.remove();
+    setTimeout(function(){URL.revokeObjectURL(a.href)},4000);
+    btn.textContent="✓ Saved";toast("Photo saved. Look in Downloads in your gallery");
+  }catch(e){toast("Could not save the photo")}
+}
+function addAllRows(){
+  var n=0,dup=0;
+  rows.forEach(function(r){if(r.added)return;var v=cleanPlate(r.inp.value);if(!validPlate(v))return;if(addPlate(v)){markAdded(r);n++}else dup++});
+  var done=rows.filter(function(r){return r.added});
+  if(!done.length){rmsg(dup?"Those plates are already in the list":"Nothing to add yet. Read or type a plate first");return}
+  var left=rows.length-done.length;
+  cancelBatch=true;done.forEach(function(r){dropShot(r.s)});
+  rows=[];$("rlist").textContent="";$("res").hidden=true;$("mainview").hidden=false;
+  updateShut();updPend();msg("");render();
+  toast("Added "+n+" plate"+(n!==1?"s":"")+(dup?" ("+dup+" already in list)":"")+(left?" · "+left+" photo"+(left>1?"s":"")+" kept":""));
+  var l=$("list");if(l&&l.scrollIntoView)l.scrollIntoView({behavior:"smooth",block:"start"});
+}
 function closeResults(force){
   var pending=rows.some(function(r){return !r.added});
   var b=$("rclose");
@@ -705,11 +747,7 @@ $("tLive").onclick=function(){setType("live")};
 $("tBatch").onclick=function(){setType("batch")};
 $("shut").onclick=shoot;
 $("doneb").onclick=function(){if(!shots.length)return;stopLive();showResults()};
-$("addall").onclick=function(){
-  var n=0,dup=0;
-  rows.forEach(function(r){if(r.added)return;var v=cleanPlate(r.inp.value);if(!validPlate(v))return;if(addPlate(v)){markAdded(r);n++}else dup++});
-  rmsg("Added "+n+(dup?" ("+dup+" already in list)":""));
-};
+$("addall").onclick=addAllRows;
 $("rclose").onclick=function(){closeResults(false)};
 var hb=$("hold");
 hb.addEventListener("pointerdown",function(e){e.preventDefault();try{hb.setPointerCapture(e.pointerId)}catch(_){}setHold(true)});
