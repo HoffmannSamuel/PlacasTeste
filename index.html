@@ -39,6 +39,14 @@ button{font-family:inherit}
 .rsave{padding:8px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--mut);font-size:13px}
 #toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(16px);background:#2a2f3a;color:#fff;padding:12px 18px;border-radius:12px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;max-width:88%;text-align:center;z-index:50;border:1px solid var(--line)}
 #toast.show{opacity:1;transform:translateX(-50%)}
+.alt{display:none}
+#ctl{display:flex;flex-direction:column}
+#ctl .cam{order:1}#ctl .scan{order:2}#ctl .hold{order:3}#ctl .tbtn{order:4}#ctl .shut{order:5}#ctl .done{order:6}
+#ctl.batch .done{order:1;margin:0 0 10px}
+#ctl.batch .cam{order:2}
+#ctl.batch .shut{order:3}
+#ctl.batch .tbtn{order:4}
+#ctl.batch .scan{order:5;margin-top:8px}
 .shut{display:block;width:100%;margin-top:8px;padding:22px;border:0;border-radius:14px;background:var(--ac);color:#fff;font-size:18px;font-weight:700}
 .shut:active{filter:brightness(.85)}
 .done{display:block;width:100%;margin-top:8px;padding:14px;border:1px solid var(--ac);border-radius:12px;background:var(--card);color:var(--tx);font-size:15px;font-weight:600}
@@ -66,7 +74,6 @@ button{font-family:inherit}
 .add input:focus{outline:0;border-color:var(--ac)}
 .add button{padding:0 18px;border:0;border-radius:12px;background:var(--ac);color:#fff;font-size:15px;font-weight:600}
 .alt{display:block;width:100%;padding:11px;margin-top:8px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--mut);font-size:14px}
-input[type=file]{display:none}
 #msg{min-height:22px;margin:10px 2px;color:var(--mut);font-size:14px}
 #dbg{color:var(--mut);font-size:12px;margin:-6px 2px 8px;min-height:14px}
 #msg.err{color:var(--bad)}
@@ -83,19 +90,19 @@ li button{background:none;border:0;color:var(--mut);font-size:20px;padding:4px 8
 </head>
 <body>
 <main>
-<h1><div>Plates <em id="ver">v15</em></div><span id="count"></span></h1>
+<h1><div>Plates <em id="ver">v16</em></div><span id="count"></span></h1>
 <div id="mainview">
 <div class="pend" id="pend" hidden><div id="pendt"></div><div class="prow"><button id="pendread" class="pri">Read them</button><button id="penddel">Discard</button></div></div>
 <div class="seg"><button id="mCar" class="on">Car</button><button id="mMoto">Motorcycle</button></div>
 <div class="seg"><button id="tLive" class="on">Live scan</button><button id="tBatch">Batch photos</button></div>
+<div id="ctl">
 <div class="cam" id="cam"><video id="vid" playsinline muted></video><div class="box" id="box"></div></div>
 <button class="scan" id="scan">📷 Start scanning</button>
 <button class="hold" id="hold" hidden>✋ Hold to scan</button>
 <button class="shut" id="shut" hidden>● Take photo</button>
 <button class="done" id="doneb" hidden disabled>✔ Done — read the photos</button>
 <button class="tbtn" id="torch" hidden>🔦 Torch: Off</button>
-<button class="alt" id="photo">or pick / take a photo instead</button>
-<input type="file" id="file" accept="image/*" capture="environment">
+</div>
 <div id="msg"></div>
 <div id="dbg"></div>
 <div class="add"><input id="man" placeholder="Add plate manually" maxlength="8" autocapitalize="characters" autocomplete="off" spellcheck="false"><button id="addb">Add</button></div>
@@ -181,7 +188,7 @@ function closeInk(ink,w,h,r){
   return o;
 }
 function glyphBoxes(ink,w,h,moto){
-  var seen=getBuf('sn',Uint8Array,w*h),stack=getBuf('st',Int32Array,w*h),boxes=[];seen.fill(0,0,w*h);var _x,x,y,lo=moto?.14:.2,hi=moto?.5:.85;
+  var seen=getBuf('sn',Uint8Array,w*h),stack=getBuf('st',Int32Array,w*h),boxes=[];seen.fill(0,0,w*h);var _x,x,y,lo=moto?.14:.13,hi=moto?.5:.85;
   for(y=0;y<h;y++)for(x=0;x<w;x++){
     var s=y*w+x;if(!ink[s]||seen[s])continue;
     var sp=0,x0=x,x1=x,y0=y,y1=y;stack[sp++]=s;seen[s]=1;
@@ -237,7 +244,17 @@ function spanAt(ink,w,b,r){
 /* shape rules on top of the OCR guess for glyph i */
 function shapeFix(ch,i,ink,w,b){
   var letterPos=i<3||i===4;
-  if(!letterPos&&(ch==="0"||ch==="1"))return spanAt(ink,w,b,.5)>=.6?"0":"1";
+  if(!letterPos&&(ch==="0"||ch==="1"||ch==="6")){
+    if(spanAt(ink,w,b,.5)<.6)return "1";
+    var bw0=b[1]-b[0],bh0=b[3]-b[2],n0=0,t0=0;
+    for(var y0=b[2]+Math.floor(bh0*.12);y0<b[2]+Math.floor(bh0*.38);y0++)for(var x0=b[0]+Math.floor(bw0*.75);x0<b[1];x0++){t0++;if(ink[y0*w+x0])n0++}
+    return n0/Math.max(1,t0)>=.2?"0":"6";
+  }
+  if(letterPos&&(ch==="C"||ch==="E")){
+    var bw1=b[1]-b[0],bh1=b[3]-b[2],n1=0,t1=0;
+    for(var y1=b[2]+Math.floor(bh1*.42);y1<b[2]+Math.floor(bh1*.58);y1++)for(var x1=b[0]+Math.floor(bw1*.55);x1<b[0]+Math.floor(bw1*.9);x1++){t1++;if(ink[y1*w+x1])n1++}
+    return n1/Math.max(1,t1)>=.08?"E":"C";
+  }
   if(letterPos&&(ch==="H"||ch==="M")){
     var bw=b[1]-b[0],bh=b[3]-b[2],n=0,t=0;
     for(var y=b[2]+Math.floor(bh*.3);y<b[2]+Math.floor(bh*.4);y++)for(var x=b[0]+Math.floor(bw*.42);x<b[0]+Math.floor(bw*.58);x++){t++;if(ink[y*w+x])n++}
@@ -356,6 +373,15 @@ function gcrop(cv,b){
   var o=mk(cw+40,ch+40),g=o.getContext("2d");g.fillStyle="#fff";g.fillRect(0,0,o.width,o.height);
   g.imageSmoothingQuality="high";g.drawImage(cv,x0,y0,x1-x0,y1-y0,20,20,cw,ch);return o;
 }
+/* like gcrop, but everything outside the character's own box is painted white (removes header/neighbour junk) */
+function gcropMasked(cv,b){
+  var bw=b[1]-b[0],bh=b[3]-b[2],px=Math.round(bw*.25),py=Math.round(bh*.2),s=70/bh;
+  var x0=Math.max(0,b[0]-px),y0=Math.max(0,b[2]-py),x1=Math.min(cv.width,b[1]+px),y1=Math.min(cv.height,b[3]+py);
+  var cw=Math.max(1,Math.round((x1-x0)*s)),ch=Math.max(1,Math.round((y1-y0)*s));
+  var o=mk(cw+40,ch+40),g=o.getContext("2d");g.fillStyle="#fff";g.fillRect(0,0,o.width,o.height);g.imageSmoothingQuality="high";
+  g.drawImage(cv,b[0],b[2],bw,bh,20+(b[0]-x0)*s,20+(b[2]-y0)*s,bw*s,bh*s);
+  return o;
+}
 function smoothCrop(cv){
   var w=cv.width,h=cv.height,g=cv.getContext("2d"),d=g.getImageData(0,0,w,h),a=d.data,n=w*h,s=new Uint8Array(n),i;
   for(i=0;i<n;i++)s[i]=a[i*4];
@@ -398,10 +424,21 @@ async function readGlyphs(v,B){
     ]);
     all=all.concat(R2[0],R2[1]);
   }
+  var weak=[],more=[[],[],[],[],[],[],[]];
+  for(i=0;i<7;i++){var c2=pickChar(i,all.map(function(a){return a[i]}));if(!c2||pickChar.score<45)weak.push(i)}
+  if(weak.length){
+    var Dm=weak.map(function(k){return gcropMasked(v.bin,B[k])}),Em=Dm.map(smoothCrop);
+    var R3=await Promise.all([
+      (async function(){return [await recMany(w[0],Dm,LET,"L"),await recMany(w[0],Em,LET,"L")]})(),
+      (async function(){return [await recMany(w[1],Dm,DIG,"D"),await recMany(w[1],Em,DIG,"D")]})()
+    ]);
+    R3[0].concat(R3[1]).forEach(function(arr){arr.forEach(function(x,j){more[weak[j]].push(x)})});
+    extra=extra.concat(Dm,Em);
+  }
   free(K.concat(extra));
   var out="";
   for(i=0;i<7;i++){
-    var ch=pickChar(i,all.map(function(a){return a[i]}));
+    var ch=pickChar(i,all.map(function(a){return a[i]}).concat(more[i]));
     if(!ch)return null;
     out+=shapeFix(ch,i,v.ink,v.w,B[i]);
   }
@@ -467,7 +504,7 @@ function setHold(on){
 async function startLive(){
   try{
     stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}},audio:false});
-  }catch(e){msg("Camera blocked. Allow camera access, or use the photo option.",true);return}
+  }catch(e){msg("Camera blocked. Allow camera access for this page.",true);return}
   vid.srcObject=stream;await vid.play().catch(function(){});
   try{await stream.getVideoTracks()[0].applyConstraints({advanced:[{focusMode:"continuous"}]})}catch(e){}
   try{var cp=stream.getVideoTracks()[0].getCapabilities();torchOK=!!(cp&&cp.torch)}catch(e){torchOK=false}
@@ -537,26 +574,6 @@ async function loop(){
     }catch(e){if(e&&e.message==="slow"){msg("Reader was slow, restarting it…");await resetWorkers()}await sleep(300)}
   }
 }
-/* ---- single photo ---- */
-async function analyze(file){
-  if(busy)return;busy=true;$("scan").disabled=true;
-  try{
-    var w=await getWorkers();msg("Reading photo…");
-    var img=await new Promise(function(res,rej){var i=new Image(),u=URL.createObjectURL(file);i.onload=function(){URL.revokeObjectURL(u);res(i)};i.onerror=rej;i.src=u});
-    var s=Math.min(1,1600/Math.max(img.width,img.height)),found=[];
-    var v=variants(img,0,0,img.width,img.height,Math.round(img.width*s),mode==="moto");
-    var moto=mode==="moto",B=glyphBoxes(v.ink,v.w,v.h,moto)||glyphBoxes(v.ink,v.w,v.h,!moto);
-    if(B){var p=await readGlyphs(v,B);if(p)found=[p]}
-    if(!found.length){
-      var wl=LET+DIG;
-      var r=await Promise.all([0,1].map(async function(k){await w[k].setParameters({tessedit_pageseg_mode:k?P.SINGLE_BLOCK:P.SPARSE_TEXT,tessedit_char_whitelist:wl});var o=await w[k].recognize(k?v.bin:v.gray);return extract(o.data.text||"",moto)}));
-      found=[].concat(r[0],r[1]).filter(function(p,i,a){return a.indexOf(p)===i});
-    }
-    var added=0;found.forEach(function(p){if(addPlate(p))added++});
-    msg(!found.length?"No plate found. Try the live scanner.":added?"Added "+added+" — check it":"Already in list",!found.length);
-  }catch(e){msg("Could not read the image.",true)}
-  finally{busy=false;$("scan").disabled=false}
-}
 /* ---- export ---- */
 function list(){return items.slice().reverse().map(function(i){return i.p})}
 async function sendFile(f){
@@ -583,8 +600,6 @@ $("clr").onclick=function(){
   setTimeout(function(){b.textContent="Clear";delete b.dataset.c},3000);
 };
 $("scan").onclick=function(){live?stopLive():startLive()};
-$("photo").onclick=function(){$("file").click()};
-$("file").onchange=function(e){var f=e.target.files[0];e.target.value="";if(f)analyze(f)};
 $("mCar").onclick=function(){setMode("car")};
 $("mMoto").onclick=function(){setMode("moto")};
 function manualAdd(){
@@ -657,7 +672,7 @@ function cleanPlate(s){return s.toUpperCase().replace(/[^A-Z0-9]/g,"")}
 function setType(tp){
   if(live)stopLive();
   scanType=tp;$("tLive").className=tp==="live"?"on":"";$("tBatch").className=tp==="batch"?"on":"";
-  $("photo").hidden=(tp==="batch");$("torch").textContent=torchLabel();
+  $("ctl").className=tp==="batch"?"batch":"";$("torch").textContent=torchLabel();
   $("scan").textContent=tp==="batch"?"📷 Open camera":"📷 Start scanning";msg("");
 }
 function rmsg(t){$("rmsg").textContent=t||""}
